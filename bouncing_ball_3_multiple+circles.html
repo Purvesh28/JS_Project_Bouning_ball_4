@@ -1,8 +1,9 @@
+<!-- Author: Purvesh Dave -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Dynamic Nested Rings</title>
+<title>Dynamic Nested Rings with Gravity</title>
 <style>
   body {
     margin: 0;
@@ -37,18 +38,17 @@ const center = {
    NESTED CIRCLE SETTINGS
    ========================= */
 const circles = [];
-const totalCircles = 50;
-const outerRadius = 220;
-const gapBetween = 4;
+const totalCircles = 25;
+const gapBetween = 8;
 const gapLength = 40;
 
-/* Create 50 rings with individual rotation speeds */
+/* Create rings from INNER → OUTER */
 for (let i = 0; i < totalCircles; i++) {
   circles.push({
-    radius: outerRadius - i * gapBetween,
+    radius: 20 + i * gapBetween,
     broken: false,
 
-    // Each ring rotates differently
+    // Independent rotation
     angle: Math.random() * Math.PI * 2,
     speed: (Math.random() * 0.03 + 0.005) * (Math.random() < 0.5 ? -1 : 1)
   });
@@ -57,14 +57,15 @@ for (let i = 0; i < totalCircles; i++) {
 /* =========================
    PHYSICS SETTINGS
    ========================= */
-const gravity = 0.15;
+const gravity = 0.05;   // 🔽 Soft vertical gravity (key value)
 const balls = [];
 
 /* =========================
    SPAWN SINGLE BALL
    ========================= */
-function spawnBall(x, y, speed = 3) {
+function spawnBall(x, y) {
   const angle = Math.random() * Math.PI * 2;
+  const speed = 3;
 
   balls.push({
     x,
@@ -72,8 +73,7 @@ function spawnBall(x, y, speed = 3) {
     radius: 6,
     vx: Math.cos(angle) * speed,
     vy: Math.sin(angle) * speed,
-    color: "white",
-    escapedLayer: -1   // Highest layer crossed so far
+    color: "white"
   });
 }
 
@@ -83,13 +83,10 @@ spawnBall(center.x, center.y);
 /* =========================
    ANGLE UTILITIES
    ========================= */
-
-/* Normalize any angle to 0 → 2π */
 function normalizeAngle(a) {
   return (a + Math.PI * 2) % (Math.PI * 2);
 }
 
-/* Check if a given angle lies inside this ring’s gap */
 function isBallInGap(ballAngle, ringAngle, gapAngle) {
   const start = normalizeAngle(ringAngle - gapAngle / 2);
   const end   = normalizeAngle(ringAngle + gapAngle / 2);
@@ -102,16 +99,14 @@ function isBallInGap(ballAngle, ringAngle, gapAngle) {
    DRAWING
    ========================= */
 
-/* Draw all intact rings */
 function drawCircles() {
   ctx.lineWidth = 2;
 
   circles.forEach((circle, index) => {
-    if (circle.broken) return; // Skip destroyed rings
+    if (circle.broken) return;
 
     const gapAngle = gapLength / circle.radius;
 
-    // Depth-based color variation
     ctx.strokeStyle = `hsl(${index * 6}, 70%, 60%)`;
 
     ctx.beginPath();
@@ -126,7 +121,6 @@ function drawCircles() {
   });
 }
 
-/* Draw the single ball */
 function drawBall(ball) {
   ctx.beginPath();
   ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
@@ -139,10 +133,21 @@ function drawBall(ball) {
    ========================= */
 
 function updateBall() {
-  const b = balls[0]; // Only one ball exists
+  const b = balls[0];
 
-  /* Apply gravity */
+  /* 🔽 Apply gravity (vertical) */
   b.vy += gravity;
+
+  /* 🔄 Small inward stabilizing force (keeps ball interacting with rings) */
+  const dxCenter = center.x - b.x;
+  const dyCenter = center.y - b.y;
+  const distCenter = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter);
+
+  if (distCenter > 0) {
+    const pull = 0.0007;   // subtle radial pull
+    b.vx += (dxCenter / distCenter) * pull;
+    b.vy += (dyCenter / distCenter) * pull;
+  }
 
   /* Move ball */
   b.x += b.vx;
@@ -153,40 +158,46 @@ function updateBall() {
   const distance = Math.sqrt(dx * dx + dy * dy);
   const angle = normalizeAngle(Math.atan2(dy, dx));
 
-  /* Check interaction with each ring */
-  for (let layer = 0; layer < circles.length; layer++) {
-    const circle = circles[layer];
-
-    // Skip already destroyed or passed layers
-    if (circle.broken || b.escapedLayer >= layer) continue;
+    /* Check collision with ALL intact rings */
+  for (let i = 0; i < circles.length; i++) {
+    const circle = circles[i];
+    if (circle.broken) continue;
 
     const gapAngle = gapLength / circle.radius;
 
-    /* Collision condition */
-    if (distance + b.radius >= circle.radius) {
+    if (
+      distance + b.radius >= circle.radius &&
+      distance - b.radius <= circle.radius
+    ) {
 
-      /* 🚪 Ball crosses gap → destroy ring immediately */
+      /* Normal vector at contact */
+      const nx = dx / distance;
+      const ny = dy / distance;
+
+      /* 🚪 Escape through rotating gap → destroy ring and FORCE pass-through */
       if (isBallInGap(angle, circle.angle, gapAngle)) {
 
-        circle.broken = true;      // Ring disappears
-        b.escapedLayer = layer;   // Mark layer passed
+        circle.broken = true;   // Ring disappears
 
+        // 👉 Push ball slightly OUTSIDE the ring so it never collides again
+        b.x = center.x + nx * (circle.radius + b.radius + 1);
+        b.y = center.y + ny * (circle.radius + b.radius + 1);
+
+        // ❌ NO bounce here — clean escape
         break;
       }
 
-      /* 🔁 Bounce on intact ring */
-      const nx = dx / distance;
-      const ny = dy / distance;
+      /* 🔁 Bounce on solid part of ring */
       const dot = b.vx * nx + b.vy * ny;
 
       b.vx -= 2 * dot * nx;
       b.vy -= 2 * dot * ny;
 
-      /* Slight damping */
-      b.vx *= 0.99;
-      b.vy *= 0.99;
+      /* Energy damping */
+      b.vx *= 0.995;
+      b.vy *= 0.995;
 
-      /* Reposition to prevent sticking */
+      /* Snap to inner surface */
       b.x = center.x + nx * (circle.radius - b.radius);
       b.y = center.y + ny * (circle.radius - b.radius);
 
@@ -194,19 +205,20 @@ function updateBall() {
     }
   }
 
-  /* Remove only after fully leaving screen */
+
+  /* Remove only after leaving screen */
   if (
     b.x + b.radius < -50 ||
     b.x - b.radius > canvas.width + 50 ||
     b.y - b.radius > canvas.height + 50 ||
     b.y + b.radius < -50
   ) {
-    balls.length = 0; // End simulation
+    balls.length = 0;
   }
 }
 
 /* =========================
-   MAIN ANIMATION LOOP
+   MAIN LOOP
    ========================= */
 
 function animate() {
