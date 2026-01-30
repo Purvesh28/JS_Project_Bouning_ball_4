@@ -1,1 +1,245 @@
-<html></html>
+<!-- Author: Purvesh Dave -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dynamic Nested Rings with Gravity</title>
+<style>
+  body {
+    margin: 0;
+    background: #111;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+  canvas {
+    background: #000;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas" width="500" height="500"></canvas>
+
+<script>
+/* =========================
+   CANVAS INITIALIZATION
+   ========================= */
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const center = {
+  x: canvas.width / 2,
+  y: canvas.height / 2
+};
+
+/* =========================
+   NESTED CIRCLE SETTINGS
+   ========================= */
+const circles = [];
+const totalCircles = 25;
+const gapBetween = 8;
+const gapLength = 40;
+
+/* Create rings from INNER → OUTER */
+for (let i = 0; i < totalCircles; i++) {
+  circles.push({
+    radius: 20 + i * gapBetween,
+    broken: false,
+
+    // Independent rotation
+    angle: Math.random() * Math.PI * 2,
+    speed: (Math.random() * 0.03 + 0.005) * (Math.random() < 0.5 ? -1 : 1)
+  });
+}
+
+/* =========================
+   PHYSICS SETTINGS
+   ========================= */
+const gravity = 0.05;   // 🔽 Soft vertical gravity (key value)
+const balls = [];
+
+/* =========================
+   SPAWN SINGLE BALL
+   ========================= */
+function spawnBall(x, y) {
+  const angle = Math.random() * Math.PI * 2;
+  const speed = 3;
+
+  balls.push({
+    x,
+    y,
+    radius: 6,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    color: "white"
+  });
+}
+
+/* Start with one ball */
+spawnBall(center.x, center.y);
+
+/* =========================
+   ANGLE UTILITIES
+   ========================= */
+function normalizeAngle(a) {
+  return (a + Math.PI * 2) % (Math.PI * 2);
+}
+
+function isBallInGap(ballAngle, ringAngle, gapAngle) {
+  const start = normalizeAngle(ringAngle - gapAngle / 2);
+  const end   = normalizeAngle(ringAngle + gapAngle / 2);
+
+  if (start < end) return ballAngle >= start && ballAngle <= end;
+  return ballAngle >= start || ballAngle <= end;
+}
+
+/* =========================
+   DRAWING
+   ========================= */
+
+function drawCircles() {
+  ctx.lineWidth = 2;
+
+  circles.forEach((circle, index) => {
+    if (circle.broken) return;
+
+    const gapAngle = gapLength / circle.radius;
+
+    ctx.strokeStyle = "#00e5ff";   // cyan
+
+    ctx.beginPath();
+    ctx.arc(
+      center.x,
+      center.y,
+      circle.radius,
+      circle.angle + gapAngle / 2,
+      circle.angle + Math.PI * 2 - gapAngle / 2
+    );
+    ctx.stroke();
+  });
+}
+
+function drawBall(ball) {
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+  ctx.fillStyle = ball.color;
+  ctx.fill();
+}
+
+/* =========================
+   BALL PHYSICS & BREAK LOGIC
+   ========================= */
+
+function updateBall() {
+  const b = balls[0];
+
+  /* 🔽 Apply gravity (vertical) */
+  b.vy += gravity;
+
+  /* 🔄 Small inward stabilizing force (keeps ball interacting with rings) */
+  const dxCenter = center.x - b.x;
+  const dyCenter = center.y - b.y;
+  const distCenter = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter);
+
+  if (distCenter > 0) {
+    const pull = 0.0007;   // subtle radial pull
+    b.vx += (dxCenter / distCenter) * pull;
+    b.vy += (dyCenter / distCenter) * pull;
+  }
+
+  /* Move ball */
+  b.x += b.vx;
+  b.y += b.vy;
+
+  const dx = b.x - center.x;
+  const dy = b.y - center.y;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  const angle = normalizeAngle(Math.atan2(dy, dx));
+
+    /* Check collision with ALL intact rings */
+  for (let i = 0; i < circles.length; i++) {
+    const circle = circles[i];
+    if (circle.broken) continue;
+
+    const gapAngle = gapLength / circle.radius;
+
+    if (
+      distance + b.radius >= circle.radius &&
+      distance - b.radius <= circle.radius
+    ) {
+
+      /* Normal vector at contact */
+      const nx = dx / distance;
+      const ny = dy / distance;
+
+      /* 🚪 Escape through rotating gap → destroy ring and FORCE pass-through */
+      if (isBallInGap(angle, circle.angle, gapAngle)) {
+
+        circle.broken = true;   // Ring disappears
+
+        // 👉 Push ball slightly OUTSIDE the ring so it never collides again
+        b.x = center.x + nx * (circle.radius + b.radius + 1);
+        b.y = center.y + ny * (circle.radius + b.radius + 1);
+
+        // ❌ NO bounce here — clean escape
+        break;
+      }
+
+      /* 🔁 Bounce on solid part of ring */
+      const dot = b.vx * nx + b.vy * ny;
+
+      b.vx -= 2 * dot * nx;
+      b.vy -= 2 * dot * ny;
+
+      /* Energy damping */
+      b.vx *= 0.995;
+      b.vy *= 0.995;
+
+      /* Snap to inner surface */
+      b.x = center.x + nx * (circle.radius - b.radius);
+      b.y = center.y + ny * (circle.radius - b.radius);
+
+      break;
+    }
+  }
+
+
+  /* Remove only after leaving screen */
+  if (
+    b.x + b.radius < -50 ||
+    b.x - b.radius > canvas.width + 50 ||
+    b.y - b.radius > canvas.height + 50 ||
+    b.y + b.radius < -50
+  ) {
+    balls.length = 0;
+  }
+}
+
+/* =========================
+   MAIN LOOP
+   ========================= */
+
+function animate() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  /* Rotate each ring independently */
+  circles.forEach(circle => {
+    circle.angle += circle.speed;
+  });
+
+  drawCircles();
+  updateBall();
+  balls.forEach(drawBall);
+
+  requestAnimationFrame(animate);
+}
+
+animate();
+</script>
+
+</body>
+</html>
+
+
